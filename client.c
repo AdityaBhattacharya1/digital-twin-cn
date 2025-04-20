@@ -121,6 +121,7 @@ int main()
         printf("5. Get Digital Twin Health Info\n");
         printf("6. Change A/B Test Ratio (current: %.1f)\n", ab_ratio);
         printf("7. Exit\n");
+        printf("8. Replay Request to Both Systems\n");
         printf("Enter choice: ");
 
         int choice;
@@ -130,23 +131,20 @@ int main()
         switch (choice)
         {
         case 1:
-        {
             strcpy(req.operation, "CALCULATE");
             printf("Enter calculation (e.g., 10 + 5): ");
             fgets(req.parameters, sizeof(req.parameters), stdin);
             req.parameters[strcspn(req.parameters, "\n")] = 0;
             break;
-        }
+
         case 2:
-        {
             strcpy(req.operation, "ECHO");
             printf("Enter text to echo: ");
             fgets(req.parameters, sizeof(req.parameters), stdin);
             req.parameters[strcspn(req.parameters, "\n")] = 0;
             break;
-        }
+
         case 3:
-        {
             strcpy(req.operation, "UPPERCASE");
             printf("Enter text to convert to uppercase: ");
             fgets(req.parameters, sizeof(req.parameters), stdin);
@@ -174,14 +172,13 @@ int main()
                 printf("Result: %s\n", resp_twin.result);
                 printf("Latency: %.3f ms\n", time_taken);
             }
-
             continue;
-        }
+
         case 4:
             print_ab_test_stats(&stats);
             continue;
+
         case 5:
-        {
             strcpy(req.operation, "HEALTH");
             strcpy(req.parameters, "");
             req.request_id = next_req_id++;
@@ -204,9 +201,8 @@ int main()
                 printf("\nHealth Info from Digital Twin:\n");
                 printf("%s\n", resp_twin.result);
             }
-
             continue;
-        }
+
         case 6:
             printf("Enter new A/B test ratio (0.0-1.0): ");
             scanf("%f", &ab_ratio);
@@ -216,8 +212,88 @@ int main()
                 ab_ratio = 1.0;
             printf("A/B test ratio updated to %.1f\n", ab_ratio);
             continue;
+
         case 7:
             return 0;
+
+        case 8:
+            printf("Choose operation to replay:\n");
+            printf("1. CALCULATE\n2. ECHO\nEnter choice: ");
+            int replay_choice;
+            scanf("%d", &replay_choice);
+            getchar();
+
+            if (replay_choice == 1)
+            {
+                strcpy(req.operation, "CALCULATE");
+                printf("Enter calculation (e.g., 10 + 5): ");
+            }
+            else if (replay_choice == 2)
+            {
+                strcpy(req.operation, "ECHO");
+                printf("Enter text to echo: ");
+            }
+            else
+            {
+                printf("Invalid replay operation.\n");
+                continue;
+            }
+
+            fgets(req.parameters, sizeof(req.parameters), stdin);
+            req.parameters[strcspn(req.parameters, "\n")] = 0;
+
+            req.request_id = next_req_id++;
+            stats.total_requests += 2;
+            stats.original_requests++;
+            stats.twin_requests++;
+
+            // Send to original system
+            gettimeofday(&start, NULL);
+            if (send_request(SERVER_IP, ORIGINAL_PORT, &req, &resp_original) == 0)
+            {
+                gettimeofday(&end, NULL);
+                time_taken = (end.tv_sec - start.tv_sec) * 1000.0 +
+                             (end.tv_usec - start.tv_usec) / 1000.0;
+                stats.original_latency += time_taken;
+                if (resp_original.status_code == 200)
+                    stats.successful_original++;
+
+                printf("\nOriginal System Response:\n");
+                printf("Status: %d\n", resp_original.status_code);
+                printf("Result: %s\n", resp_original.result);
+                printf("Latency: %.3f ms\n", time_taken);
+            }
+
+            // Send to digital twin
+            gettimeofday(&start, NULL);
+            if (send_request(SERVER_IP, TWIN_PORT, &req, &resp_twin) == 0)
+            {
+                gettimeofday(&end, NULL);
+                time_taken = (end.tv_sec - start.tv_sec) * 1000.0 +
+                             (end.tv_usec - start.tv_usec) / 1000.0;
+                stats.twin_latency += time_taken;
+                if (resp_twin.status_code == 200)
+                    stats.successful_twin++;
+
+                printf("\nDigital Twin Response:\n");
+                printf("Status: %d\n", resp_twin.status_code);
+                printf("Result: %s\n", resp_twin.result);
+                printf("Latency: %.3f ms\n", time_taken);
+            }
+
+            // Compare
+            if (resp_original.status_code != resp_twin.status_code ||
+                strcmp(resp_original.result, resp_twin.result) != 0)
+            {
+                printf("\n⚠️ MISMATCH DETECTED!\n");
+            }
+            else
+            {
+                printf("\n✅ Responses Match\n");
+            }
+
+            continue;
+
         default:
             printf("Invalid choice\n");
             continue;
@@ -241,9 +317,7 @@ int main()
                 stats.twin_latency += time_taken;
 
                 if (resp_twin.status_code == 200)
-                {
                     stats.successful_twin++;
-                }
 
                 printf("\nResponse from Digital Twin:\n");
                 printf("Status: %d\n", resp_twin.status_code);
@@ -264,9 +338,7 @@ int main()
                 stats.original_latency += time_taken;
 
                 if (resp_original.status_code == 200)
-                {
                     stats.successful_original++;
-                }
 
                 printf("\nResponse from Original System:\n");
                 printf("Status: %d\n", resp_original.status_code);
